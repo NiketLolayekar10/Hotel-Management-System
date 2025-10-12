@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { projectId } from '../utils/supabase/info';
+import info, { projectId } from '../utils/supabase/info';
 import type { Booking } from '../utils/supabase/client';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';

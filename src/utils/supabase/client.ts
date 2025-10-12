@@ -1,9 +1,22 @@
 import { createClient } from '@supabase/supabase-js';
-import { projectId, publicAnonKey } from './info';
+import info, { supabaseUrl as SUPABASE_URL, publicAnonKey } from './info';
 
-const supabaseUrl = `https://${projectId}.supabase.co`;
+// Create client for browser usage. Ensure the anon key is provided.
+if (!publicAnonKey || publicAnonKey === 'YOUR_PUBLIC_ANON_KEY') {
+  // In development we warn; in production this should be configured.
+  // eslint-disable-next-line no-console
+  console.warn('Supabase anon key is not set. Set VITE_SUPABASE_ANON_KEY in .env.local');
+}
 
-export const supabase = createClient(supabaseUrl, publicAnonKey);
+export const supabase = createClient(SUPABASE_URL, publicAnonKey);
+
+// Helper to create a server (service_role) client when you have the service key available.
+export function createServerClient(serviceRoleKey: string) {
+  if (!serviceRoleKey) {
+    throw new Error('Missing Supabase service role key');
+  }
+  return createClient(SUPABASE_URL, serviceRoleKey);
+}
 
 export type RoomType = {
   id: string;

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { projectId } from '../utils/supabase/info';
+import info, { projectId } from '../utils/supabase/info';
 import type { RoomType, Room } from '../utils/supabase/client';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
