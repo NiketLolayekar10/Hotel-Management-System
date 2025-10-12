@@ -1,9 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
-import { projectId, publicAnonKey } from './info';
+import { supabaseUrl, publicAnonKey } from './info';
 
-const supabaseUrl = `https://${projectId}.supabase.co`;
-
-export const supabase = createClient(supabaseUrl, publicAnonKey);
+// Create Supabase client using environment variables from info.ts
+export const supabase = createClient(
+  supabaseUrl,
+  publicAnonKey
+);
 
 export type RoomType = {
   id: string;

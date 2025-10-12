@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { projectId } from '../utils/supabase/info';
-import type { RoomType, Room } from '../utils/supabase/client';
+import { supabase } from '../utils/supabase/client';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -13,6 +12,24 @@ import { Badge } from './ui/badge';
 import { Plus, Edit, Trash2, RefreshCw } from 'lucide-react';
 import { Alert, AlertDescription } from './ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+
+interface RoomType {
+  id: string;
+  name: string;
+  description: string;
+  price_per_night: number;
+  max_guests: number;
+  amenities: string[];
+  image_url: string;
+}
+
+interface Room {
+  id: string;
+  room_number: string;
+  room_type_id: string;
+  status: 'available' | 'occupied' | 'maintenance';
+  floor: number;
+}
 
 interface AdminRoomManagementProps {
   accessToken: string;
@@ -47,25 +64,15 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
 
     try {
       const [roomTypesRes, roomsRes] = await Promise.all([
-        fetch(`https://${projectId}.supabase.co/functions/v1/make-server-3e6b123f/room-types`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }),
-        fetch(`https://${projectId}.supabase.co/functions/v1/make-server-3e6b123f/rooms`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }),
+        supabase.from('room_types').select('*').order('name'),
+        supabase.from('rooms').select('*').order('room_number'),
       ]);
 
-      if (!roomTypesRes.ok || !roomsRes.ok) {
-        throw new Error('Failed to fetch data');
-      }
+      if (roomTypesRes.error) throw roomTypesRes.error;
+      if (roomsRes.error) throw roomsRes.error;
 
-      const [roomTypesData, roomsData] = await Promise.all([
-        roomTypesRes.json(),
-        roomsRes.json(),
-      ]);
-
-      setRoomTypes(roomTypesData);
-      setRooms(roomsData);
+      setRoomTypes(roomTypesRes.data || []);
+      setRooms(roomsRes.data || []);
     } catch (err) {
       setError('Failed to load room data');
       console.error('Fetch error:', err);
@@ -130,22 +137,19 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
         image_url: rtImageUrl,
       };
 
-      const url = editingRoomType
-        ? `https://${projectId}.supabase.co/functions/v1/make-server-3e6b123f/admin/room-types/${editingRoomType.id}`
-        : `https://${projectId}.supabase.co/functions/v1/make-server-3e6b123f/admin/room-types`;
-
-      const response = await fetch(url, {
-        method: editingRoomType ? 'PUT' : 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify(roomTypeData),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to save room type');
+      let result;
+      if (editingRoomType) {
+        result = await supabase
+          .from('room_types')
+          .update(roomTypeData)
+          .eq('id', editingRoomType.id);
+      } else {
+        result = await supabase
+          .from('room_types')
+          .insert([roomTypeData]);
       }
+
+      if (result.error) throw result.error;
 
       setDialogOpen(false);
       resetRoomTypeForm();
@@ -168,22 +172,19 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
         floor: parseInt(roomFloor),
       };
 
-      const url = editingRoom
-        ? `https://${projectId}.supabase.co/functions/v1/make-server-3e6b123f/admin/rooms/${editingRoom.id}`
-        : `https://${projectId}.supabase.co/functions/v1/make-server-3e6b123f/admin/rooms`;
-
-      const response = await fetch(url, {
-        method: editingRoom ? 'PUT' : 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify(roomData),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to save room');
+      let result;
+      if (editingRoom) {
+        result = await supabase
+          .from('rooms')
+          .update(roomData)
+          .eq('id', editingRoom.id);
+      } else {
+        result = await supabase
+          .from('rooms')
+          .insert([roomData]);
       }
+
+      if (result.error) throw result.error;
 
       setDialogOpen(false);
       resetRoomForm();
@@ -198,17 +199,12 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
     if (!confirm('Are you sure you want to delete this room type?')) return;
 
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-3e6b123f/admin/room-types/${id}`,
-        {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }
-      );
+      const { error } = await supabase
+        .from('room_types')
+        .delete()
+        .eq('id', id);
 
-      if (!response.ok) {
-        throw new Error('Failed to delete room type');
-      }
+      if (error) throw error;
 
       await fetchData();
     } catch (err) {
@@ -221,17 +217,12 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
     if (!confirm('Are you sure you want to delete this room?')) return;
 
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-3e6b123f/admin/rooms/${id}`,
-        {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }
-      );
+      const { error } = await supabase
+        .from('rooms')
+        .delete()
+        .eq('id', id);
 
-      if (!response.ok) {
-        throw new Error('Failed to delete room');
-      }
+      if (error) throw error;
 
       await fetchData();
     } catch (err) {
@@ -244,76 +235,83 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl mb-2">Room Management</h2>
-          <p className="text-gray-600">Manage room types and individual rooms</p>
+          <h2 className="text-3xl font-bold mb-2 text-slate-900 dark:text-slate-100">Room Management</h2>
+          <p className="text-slate-600 dark:text-slate-400">Manage room types and individual rooms</p>
         </div>
-        <Button onClick={fetchData} disabled={loading} variant="outline">
-          <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+        <Button onClick={fetchData} disabled={loading} variant="outline" className="gap-2 hover:bg-blue-50 dark:hover:bg-blue-950/50 transition-all duration-200">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           Refresh
         </Button>
       </div>
 
       {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
+        <Alert variant="destructive" className="border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/50">
+          <AlertDescription className="text-red-800 dark:text-red-200">{error}</AlertDescription>
         </Alert>
       )}
 
-      <Tabs defaultValue="room-types">
-        <TabsList>
-          <TabsTrigger value="room-types">Room Types</TabsTrigger>
-          <TabsTrigger value="rooms">Rooms</TabsTrigger>
+      <Tabs defaultValue="room-types" className="w-full">
+        <TabsList className="grid w-full grid-cols-2 bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm border border-white/20 dark:border-slate-700/50">
+          <TabsTrigger value="room-types" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-sm">
+            Room Types
+          </TabsTrigger>
+          <TabsTrigger value="rooms" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700 data-[state=active]:shadow-sm">
+            Rooms
+          </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="room-types">
-          <Card>
-            <CardHeader>
+        <TabsContent value="room-types" className="mt-6">
+          <Card className="border-none shadow-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-pink-500/5"></div>
+            <CardHeader className="relative bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-950/50 dark:to-pink-950/50">
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle>Room Types</CardTitle>
-                  <CardDescription>Manage room categories and pricing</CardDescription>
+                  <CardTitle className="text-xl font-semibold text-slate-900 dark:text-slate-100">Room Types</CardTitle>
+                  <CardDescription className="text-slate-600 dark:text-slate-400">Manage room categories and pricing</CardDescription>
                 </div>
-                <Dialog open={dialogOpen && !editingRoom} onOpenChange={(open) => {
+                <Dialog open={dialogOpen && !editingRoom} onOpenChange={(open: boolean) => {
                   setDialogOpen(open);
                   if (!open) resetRoomTypeForm();
                 }}>
                   <DialogTrigger asChild>
-                    <Button>
-                      <Plus className="w-4 h-4 mr-2" />
+                    <Button className="gap-2 bg-purple-600 hover:bg-purple-700 text-white transition-all duration-200 hover:scale-105">
+                      <Plus className="w-4 h-4" />
                       Add Room Type
                     </Button>
                   </DialogTrigger>
-                  <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                  <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm">
                     <DialogHeader>
-                      <DialogTitle>
+                      <DialogTitle className="text-slate-900 dark:text-slate-100">
                         {editingRoomType ? 'Edit Room Type' : 'Add New Room Type'}
                       </DialogTitle>
-                      <DialogDescription>
+                      <DialogDescription className="text-slate-600 dark:text-slate-400">
                         Configure room type details and amenities
                       </DialogDescription>
                     </DialogHeader>
                     <form onSubmit={handleSaveRoomType} className="space-y-4">
                       <div className="space-y-2">
-                        <Label htmlFor="rt-name">Name</Label>
+                        <Label htmlFor="rt-name" className="text-slate-700 dark:text-slate-300">Name</Label>
                         <Input
                           id="rt-name"
                           value={rtName}
                           onChange={(e) => setRtName(e.target.value)}
                           required
+                          className="border-slate-200 dark:border-slate-700 focus:border-purple-500 dark:focus:border-purple-400"
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="rt-description">Description</Label>
+                        <Label htmlFor="rt-description" className="text-slate-700 dark:text-slate-300">Description</Label>
                         <Textarea
                           id="rt-description"
                           value={rtDescription}
                           onChange={(e) => setRtDescription(e.target.value)}
                           required
+                          className="border-slate-200 dark:border-slate-700 focus:border-purple-500 dark:focus:border-purple-400"
                         />
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <Label htmlFor="rt-price">Price per Night ($)</Label>
+                          <Label htmlFor="rt-price" className="text-slate-700 dark:text-slate-300">Price per Night ($)</Label>
                           <Input
                             id="rt-price"
                             type="number"
@@ -322,10 +320,11 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
                             value={rtPrice}
                             onChange={(e) => setRtPrice(e.target.value)}
                             required
+                            className="border-slate-200 dark:border-slate-700 focus:border-purple-500 dark:focus:border-purple-400"
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="rt-max-guests">Max Guests</Label>
+                          <Label htmlFor="rt-max-guests" className="text-slate-700 dark:text-slate-300">Max Guests</Label>
                           <Input
                             id="rt-max-guests"
                             type="number"
@@ -333,31 +332,34 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
                             value={rtMaxGuests}
                             onChange={(e) => setRtMaxGuests(e.target.value)}
                             required
+                            className="border-slate-200 dark:border-slate-700 focus:border-purple-500 dark:focus:border-purple-400"
                           />
                         </div>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="rt-amenities">Amenities (comma-separated)</Label>
+                        <Label htmlFor="rt-amenities" className="text-slate-700 dark:text-slate-300">Amenities (comma-separated)</Label>
                         <Input
                           id="rt-amenities"
                           value={rtAmenities}
                           onChange={(e) => setRtAmenities(e.target.value)}
                           placeholder="WiFi, TV, Air Conditioning"
                           required
+                          className="border-slate-200 dark:border-slate-700 focus:border-purple-500 dark:focus:border-purple-400"
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="rt-image">Image URL</Label>
+                        <Label htmlFor="rt-image" className="text-slate-700 dark:text-slate-300">Image URL</Label>
                         <Input
                           id="rt-image"
                           type="url"
                           value={rtImageUrl}
                           onChange={(e) => setRtImageUrl(e.target.value)}
                           required
+                          className="border-slate-200 dark:border-slate-700 focus:border-purple-500 dark:focus:border-purple-400"
                         />
                       </div>
                       <div className="flex gap-2">
-                        <Button type="submit" className="flex-1">
+                        <Button type="submit" className="flex-1 bg-purple-600 hover:bg-purple-700 text-white transition-all duration-200">
                           {editingRoomType ? 'Update' : 'Create'} Room Type
                         </Button>
                         <Button
@@ -367,6 +369,7 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
                             setDialogOpen(false);
                             resetRoomTypeForm();
                           }}
+                          className="border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"
                         >
                           Cancel
                         </Button>
@@ -376,40 +379,51 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
                 </Dialog>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="relative">
               {loading ? (
-                <p className="text-center py-8 text-gray-500">Loading...</p>
+                <div className="text-center py-12">
+                  <RefreshCw className="w-8 h-8 text-purple-600 dark:text-purple-400 animate-spin mx-auto mb-4" />
+                  <p className="text-slate-600 dark:text-slate-400">Loading room types...</p>
+                </div>
               ) : roomTypes.length === 0 ? (
-                <p className="text-center py-8 text-gray-500">No room types found</p>
+                <div className="text-center py-12">
+                  <Plus className="w-16 h-16 text-purple-500 mx-auto mb-4 opacity-50" />
+                  <p className="text-slate-600 dark:text-slate-400 text-lg">No room types found</p>
+                  <p className="text-slate-500 dark:text-slate-500 text-sm mt-2">Create your first room type to get started</p>
+                </div>
               ) : (
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Description</TableHead>
-                        <TableHead>Price/Night</TableHead>
-                        <TableHead>Max Guests</TableHead>
-                        <TableHead>Amenities</TableHead>
-                        <TableHead>Actions</TableHead>
+                      <TableRow className="border-slate-200 dark:border-slate-700">
+                        <TableHead className="text-slate-900 dark:text-slate-100 font-semibold">Name</TableHead>
+                        <TableHead className="text-slate-900 dark:text-slate-100 font-semibold">Description</TableHead>
+                        <TableHead className="text-slate-900 dark:text-slate-100 font-semibold">Price/Night</TableHead>
+                        <TableHead className="text-slate-900 dark:text-slate-100 font-semibold">Max Guests</TableHead>
+                        <TableHead className="text-slate-900 dark:text-slate-100 font-semibold">Amenities</TableHead>
+                        <TableHead className="text-slate-900 dark:text-slate-100 font-semibold">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {roomTypes.map((roomType) => (
-                        <TableRow key={roomType.id}>
-                          <TableCell>{roomType.name}</TableCell>
-                          <TableCell className="max-w-xs truncate">{roomType.description}</TableCell>
-                          <TableCell>${roomType.price_per_night}</TableCell>
-                          <TableCell>{roomType.max_guests}</TableCell>
+                        <TableRow key={roomType.id} className="border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                          <TableCell className="font-medium text-slate-900 dark:text-slate-100">{roomType.name}</TableCell>
+                          <TableCell className="max-w-xs truncate text-slate-600 dark:text-slate-400">{roomType.description}</TableCell>
+                          <TableCell className="font-semibold text-green-600 dark:text-green-400">${roomType.price_per_night}</TableCell>
+                          <TableCell>
+                            <Badge variant="secondary" className="bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                              {roomType.max_guests} guest{roomType.max_guests !== 1 ? 's' : ''}
+                            </Badge>
+                          </TableCell>
                           <TableCell>
                             <div className="flex flex-wrap gap-1">
                               {roomType.amenities.slice(0, 3).map((amenity) => (
-                                <Badge key={amenity} variant="secondary" className="text-xs">
+                                <Badge key={amenity} variant="outline" className="text-xs bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800">
                                   {amenity}
                                 </Badge>
                               ))}
                               {roomType.amenities.length > 3 && (
-                                <Badge variant="secondary" className="text-xs">
+                                <Badge variant="outline" className="text-xs bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400">
                                   +{roomType.amenities.length - 3}
                                 </Badge>
                               )}
@@ -421,6 +435,7 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => handleEditRoomType(roomType)}
+                                className="hover:bg-purple-50 dark:hover:bg-purple-950/50 border-purple-200 dark:border-purple-800"
                               >
                                 <Edit className="w-4 h-4" />
                               </Button>
@@ -428,6 +443,7 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
                                 size="sm"
                                 variant="destructive"
                                 onClick={() => handleDeleteRoomType(roomType.id)}
+                                className="hover:bg-red-50 dark:hover:bg-red-950/50"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </Button>
@@ -443,47 +459,49 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
           </Card>
         </TabsContent>
 
-        <TabsContent value="rooms">
-          <Card>
-            <CardHeader>
+        <TabsContent value="rooms" className="mt-6">
+          <Card className="border-none shadow-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-indigo-500/5"></div>
+            <CardHeader className="relative bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/50 dark:to-indigo-950/50">
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle>Rooms</CardTitle>
-                  <CardDescription>Manage individual room inventory</CardDescription>
+                  <CardTitle className="text-xl font-semibold text-slate-900 dark:text-slate-100">Rooms</CardTitle>
+                  <CardDescription className="text-slate-600 dark:text-slate-400">Manage individual room inventory</CardDescription>
                 </div>
-                <Dialog open={dialogOpen && !editingRoomType} onOpenChange={(open) => {
+                <Dialog open={dialogOpen && !editingRoomType} onOpenChange={(open: boolean) => {
                   setDialogOpen(open);
                   if (!open) resetRoomForm();
                 }}>
                   <DialogTrigger asChild>
-                    <Button>
-                      <Plus className="w-4 h-4 mr-2" />
+                    <Button className="gap-2 bg-blue-600 hover:bg-blue-700 text-white transition-all duration-200 hover:scale-105">
+                      <Plus className="w-4 h-4" />
                       Add Room
                     </Button>
                   </DialogTrigger>
-                  <DialogContent>
+                  <DialogContent className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm">
                     <DialogHeader>
-                      <DialogTitle>
+                      <DialogTitle className="text-slate-900 dark:text-slate-100">
                         {editingRoom ? 'Edit Room' : 'Add New Room'}
                       </DialogTitle>
-                      <DialogDescription>
+                      <DialogDescription className="text-slate-600 dark:text-slate-400">
                         Configure room details
                       </DialogDescription>
                     </DialogHeader>
                     <form onSubmit={handleSaveRoom} className="space-y-4">
                       <div className="space-y-2">
-                        <Label htmlFor="room-number">Room Number</Label>
+                        <Label htmlFor="room-number" className="text-slate-700 dark:text-slate-300">Room Number</Label>
                         <Input
                           id="room-number"
                           value={roomNumber}
                           onChange={(e) => setRoomNumber(e.target.value)}
                           required
+                          className="border-slate-200 dark:border-slate-700 focus:border-blue-500 dark:focus:border-blue-400"
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="room-type">Room Type</Label>
+                        <Label htmlFor="room-type" className="text-slate-700 dark:text-slate-300">Room Type</Label>
                         <Select value={roomTypeId} onValueChange={setRoomTypeId} required>
-                          <SelectTrigger>
+                          <SelectTrigger className="border-slate-200 dark:border-slate-700 focus:border-blue-500 dark:focus:border-blue-400">
                             <SelectValue placeholder="Select room type" />
                           </SelectTrigger>
                           <SelectContent>
@@ -496,9 +514,9 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="room-status">Status</Label>
-                        <Select value={roomStatus} onValueChange={(value: any) => setRoomStatus(value)} required>
-                          <SelectTrigger>
+                        <Label htmlFor="room-status" className="text-slate-700 dark:text-slate-300">Status</Label>
+                        <Select value={roomStatus} onValueChange={(value: 'available' | 'occupied' | 'maintenance') => setRoomStatus(value)} required>
+                          <SelectTrigger className="border-slate-200 dark:border-slate-700 focus:border-blue-500 dark:focus:border-blue-400">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -509,7 +527,7 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="room-floor">Floor</Label>
+                        <Label htmlFor="room-floor" className="text-slate-700 dark:text-slate-300">Floor</Label>
                         <Input
                           id="room-floor"
                           type="number"
@@ -517,10 +535,11 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
                           value={roomFloor}
                           onChange={(e) => setRoomFloor(e.target.value)}
                           required
+                          className="border-slate-200 dark:border-slate-700 focus:border-blue-500 dark:focus:border-blue-400"
                         />
                       </div>
                       <div className="flex gap-2">
-                        <Button type="submit" className="flex-1">
+                        <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white transition-all duration-200">
                           {editingRoom ? 'Update' : 'Create'} Room
                         </Button>
                         <Button
@@ -530,6 +549,7 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
                             setDialogOpen(false);
                             resetRoomForm();
                           }}
+                          className="border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"
                         >
                           Cancel
                         </Button>
@@ -539,40 +559,51 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
                 </Dialog>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="relative">
               {loading ? (
-                <p className="text-center py-8 text-gray-500">Loading...</p>
+                <div className="text-center py-12">
+                  <RefreshCw className="w-8 h-8 text-blue-600 dark:text-blue-400 animate-spin mx-auto mb-4" />
+                  <p className="text-slate-600 dark:text-slate-400">Loading rooms...</p>
+                </div>
               ) : rooms.length === 0 ? (
-                <p className="text-center py-8 text-gray-500">No rooms found</p>
+                <div className="text-center py-12">
+                  <Plus className="w-16 h-16 text-blue-500 mx-auto mb-4 opacity-50" />
+                  <p className="text-slate-600 dark:text-slate-400 text-lg">No rooms found</p>
+                  <p className="text-slate-500 dark:text-slate-500 text-sm mt-2">Create your first room to get started</p>
+                </div>
               ) : (
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
-                      <TableRow>
-                        <TableHead>Room Number</TableHead>
-                        <TableHead>Room Type</TableHead>
-                        <TableHead>Floor</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Actions</TableHead>
+                      <TableRow className="border-slate-200 dark:border-slate-700">
+                        <TableHead className="text-slate-900 dark:text-slate-100 font-semibold">Room Number</TableHead>
+                        <TableHead className="text-slate-900 dark:text-slate-100 font-semibold">Room Type</TableHead>
+                        <TableHead className="text-slate-900 dark:text-slate-100 font-semibold">Floor</TableHead>
+                        <TableHead className="text-slate-900 dark:text-slate-100 font-semibold">Status</TableHead>
+                        <TableHead className="text-slate-900 dark:text-slate-100 font-semibold">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {rooms.map((room) => {
                         const roomType = roomTypes.find(rt => rt.id === room.room_type_id);
                         return (
-                          <TableRow key={room.id}>
-                            <TableCell>{room.room_number}</TableCell>
-                            <TableCell>{roomType?.name || 'Unknown'}</TableCell>
-                            <TableCell>{room.floor}</TableCell>
+                          <TableRow key={room.id} className="border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                            <TableCell className="font-mono font-medium text-slate-900 dark:text-slate-100">{room.room_number}</TableCell>
+                            <TableCell className="text-slate-700 dark:text-slate-300">{roomType?.name || 'Unknown'}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                                Floor {room.floor}
+                              </Badge>
+                            </TableCell>
                             <TableCell>
                               <Badge
-                                className={
+                                className={`${
                                   room.status === 'available'
-                                    ? 'bg-green-500'
+                                    ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300 border-green-200 dark:border-green-800'
                                     : room.status === 'occupied'
-                                    ? 'bg-red-500'
-                                    : 'bg-yellow-500'
-                                }
+                                    ? 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300 border-red-200 dark:border-red-800'
+                                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800'
+                                }`}
                               >
                                 {room.status.toUpperCase()}
                               </Badge>
@@ -583,6 +614,7 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
                                   size="sm"
                                   variant="outline"
                                   onClick={() => handleEditRoom(room)}
+                                  className="hover:bg-blue-50 dark:hover:bg-blue-950/50 border-blue-200 dark:border-blue-800"
                                 >
                                   <Edit className="w-4 h-4" />
                                 </Button>
@@ -590,6 +622,7 @@ export function AdminRoomManagement({ accessToken }: AdminRoomManagementProps) {
                                   size="sm"
                                   variant="destructive"
                                   onClick={() => handleDeleteRoom(room.id)}
+                                  className="hover:bg-red-50 dark:hover:bg-red-950/50"
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </Button>

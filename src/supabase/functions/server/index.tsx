@@ -2,7 +2,6 @@ import { Hono } from 'npm:hono';
 import { cors } from 'npm:hono/cors';
 import { logger } from 'npm:hono/logger';
 import { createClient } from 'npm:@supabase/supabase-js';
-import * as kv from './kv_store.tsx';
 
 const app = new Hono();
 
@@ -51,16 +50,22 @@ app.post('/make-server-3e6b123f/create-admin', async (c) => {
 
     if (adminData?.user) {
       // Create admin profile
-      const adminProfile = {
-        id: adminData.user.id,
-        email: 'admin@hotel.com',
-        name: 'Hotel Administrator',
-        role: 'admin'
-      };
-      await kv.set(`user:${adminData.user.id}`, adminProfile);
+      const { error: profileError } = await supabase
+        .from('user_profiles')
+        .upsert({
+          id: adminData.user.id,
+          email: 'admin@hotel.com',
+          name: 'Hotel Administrator',
+          role: 'admin'
+        });
+
+      if (profileError) {
+        console.log('Error creating admin profile:', profileError.message);
+      }
+
       console.log('✓ Admin account created successfully: admin@hotel.com / admin123');
-      return c.json({ 
-        message: 'Admin account created successfully', 
+      return c.json({
+        message: 'Admin account created successfully',
         email: 'admin@hotel.com',
         userId: adminData.user.id
       });
@@ -77,8 +82,12 @@ app.post('/make-server-3e6b123f/create-admin', async (c) => {
 app.post('/make-server-3e6b123f/init', async (c) => {
   try {
     // Check if already initialized
-    const existingData = await kv.get('initialized');
-    if (existingData) {
+    const { data: existingData } = await supabase
+      .from('room_types')
+      .select('id')
+      .limit(1);
+
+    if (existingData && existingData.length > 0) {
       console.log('System already initialized');
       return c.json({ message: 'Already initialized' });
     }
@@ -97,14 +106,20 @@ app.post('/make-server-3e6b123f/init', async (c) => {
 
       if (adminData?.user) {
         // Create admin profile
-        const adminProfile = {
-          id: adminData.user.id,
-          email: 'admin@hotel.com',
-          name: 'Hotel Administrator',
-          role: 'admin'
-        };
-        await kv.set(`user:${adminData.user.id}`, adminProfile);
-        console.log('✓ Admin account created: admin@hotel.com / admin123');
+        const { error: profileError } = await supabase
+          .from('user_profiles')
+          .upsert({
+            id: adminData.user.id,
+            email: 'admin@hotel.com',
+            name: 'Hotel Administrator',
+            role: 'admin'
+          });
+
+        if (profileError) {
+          console.log('Error creating admin profile:', profileError.message);
+        } else {
+          console.log('✓ Admin account created: admin@hotel.com / admin123');
+        }
       } else if (adminError) {
         if (adminError.message.includes('already') || adminError.message.includes('exists')) {
           console.log('✓ Admin account already exists');
@@ -148,7 +163,12 @@ app.post('/make-server-3e6b123f/init', async (c) => {
     ];
 
     for (const roomType of roomTypes) {
-      await kv.set(`room_type:${roomType.id}`, roomType);
+      const { error } = await supabase
+        .from('room_types')
+        .upsert(roomType);
+      if (error) {
+        console.log('Error creating room type:', error.message);
+      }
     }
 
     // Create rooms
@@ -168,10 +188,13 @@ app.post('/make-server-3e6b123f/init', async (c) => {
     ];
 
     for (const room of rooms) {
-      await kv.set(`room:${room.id}`, room);
+      const { error } = await supabase
+        .from('rooms')
+        .upsert(room);
+      if (error) {
+        console.log('Error creating room:', error.message);
+      }
     }
-
-    await kv.set('initialized', true);
 
     return c.json({ message: 'Initialization complete', roomTypes: roomTypes.length, rooms: rooms.length });
   } catch (error) {
@@ -183,7 +206,15 @@ app.post('/make-server-3e6b123f/init', async (c) => {
 // Get all room types
 app.get('/make-server-3e6b123f/room-types', async (c) => {
   try {
-    const roomTypes = await kv.getByPrefix('room_type:');
+    const { data: roomTypes, error } = await supabase
+      .from('room_types')
+      .select('*')
+      .order('price_per_night');
+
+    if (error) {
+      throw error;
+    }
+
     return c.json(roomTypes);
   } catch (error) {
     console.log(`Error fetching room types: ${error}`);
@@ -194,7 +225,19 @@ app.get('/make-server-3e6b123f/room-types', async (c) => {
 // Get all rooms
 app.get('/make-server-3e6b123f/rooms', async (c) => {
   try {
-    const rooms = await kv.getByPrefix('room:');
+    const { data: rooms, error } = await supabase
+      .from('rooms')
+      .select(`
+        *,
+        room_types (*)
+      `)
+      .order('floor', { ascending: true })
+      .order('room_number', { ascending: true });
+
+    if (error) {
+      throw error;
+    }
+
     return c.json(rooms);
   } catch (error) {
     console.log(`Error fetching rooms: ${error}`);
@@ -206,35 +249,38 @@ app.get('/make-server-3e6b123f/rooms', async (c) => {
 app.post('/make-server-3e6b123f/search-rooms', async (c) => {
   try {
     const { checkIn, checkOut } = await c.req.json();
-    
-    const allRooms = await kv.getByPrefix('room:');
-    const allBookings = await kv.getByPrefix('booking:');
-    const roomTypes = await kv.getByPrefix('room_type:');
 
-    // Filter out rooms that have overlapping bookings
-    const availableRooms = allRooms.filter(room => {
-      const roomBookings = allBookings.filter(booking => 
-        booking.room_id === room.id && 
-        booking.status !== 'cancelled' &&
-        booking.status !== 'checked_out'
-      );
+    // Get all rooms with their types
+    const { data: allRooms, error: roomsError } = await supabase
+      .from('rooms')
+      .select(`
+        *,
+        room_types (*)
+      `);
 
-      const hasConflict = roomBookings.some(booking => {
-        const bookingCheckIn = new Date(booking.check_in);
-        const bookingCheckOut = new Date(booking.check_out);
-        const searchCheckIn = new Date(checkIn);
-        const searchCheckOut = new Date(checkOut);
+    if (roomsError) throw roomsError;
 
-        return (searchCheckIn < bookingCheckOut && searchCheckOut > bookingCheckIn);
-      });
+    // Get conflicting bookings
+    const { data: conflictingBookings, error: bookingsError } = await supabase
+      .from('bookings')
+      .select('room_id')
+      .neq('status', 'cancelled')
+      .neq('status', 'checked_out')
+      .or(`and(check_in.lt.${checkOut},check_out.gt.${checkIn})`);
 
-      return !hasConflict && room.status === 'available';
-    });
+    if (bookingsError) throw bookingsError;
+
+    const bookedRoomIds = new Set(conflictingBookings.map(b => b.room_id));
+
+    // Filter available rooms
+    const availableRooms = allRooms.filter(room =>
+      !bookedRoomIds.has(room.id) && room.status === 'available'
+    );
 
     // Group by room type
     const roomsByType = new Map();
     for (const room of availableRooms) {
-      const roomType = roomTypes.find(rt => rt.id === room.room_type_id);
+      const roomType = room.room_types;
       if (roomType) {
         if (!roomsByType.has(roomType.id)) {
           roomsByType.set(roomType.id, { ...roomType, available_rooms: [] });
@@ -261,45 +307,72 @@ app.post('/make-server-3e6b123f/bookings', async (c) => {
     const { room_id, check_in, check_out, guests, total_price } = await c.req.json();
 
     // Get room and room type details
-    const room = await kv.get(`room:${room_id}`);
-    if (!room) {
+    const { data: room, error: roomError } = await supabase
+      .from('rooms')
+      .select(`
+        *,
+        room_types (*)
+      `)
+      .eq('id', room_id)
+      .single();
+
+    if (roomError || !room) {
       return c.json({ error: 'Room not found' }, 404);
     }
 
-    const roomType = await kv.get(`room_type:${room.room_type_id}`);
-
     // Get user profile
-    let userProfile = await kv.get(`user:${user.id}`);
-    if (!userProfile) {
-      userProfile = {
-        id: user.id,
-        email: user.email,
-        name: user.user_metadata?.name || user.email,
-        role: 'guest'
-      };
-      await kv.set(`user:${user.id}`, userProfile);
+    let { data: userProfile, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single();
+
+    if (profileError || !userProfile) {
+      // Create profile if it doesn't exist
+      const { data: newProfile, error: createError } = await supabase
+        .from('user_profiles')
+        .insert({
+          id: user.id,
+          email: user.email,
+          name: user.user_metadata?.name || user.email,
+          role: 'guest'
+        })
+        .select()
+        .single();
+
+      if (createError) throw createError;
+      userProfile = newProfile;
     }
 
     const bookingId = `b${Date.now()}`;
     const booking = {
       id: bookingId,
       user_id: user.id,
-      user_email: userProfile.email,
-      user_name: userProfile.name,
       room_id,
-      room_number: room.room_number,
-      room_type_name: roomType?.name || 'Unknown',
       check_in,
       check_out,
       guests,
       total_price,
-      status: 'confirmed',
+      status: 'confirmed'
+    };
+
+    const { error: bookingError } = await supabase
+      .from('bookings')
+      .insert(booking);
+
+    if (bookingError) throw bookingError;
+
+    // Return booking with additional details
+    const fullBooking = {
+      ...booking,
+      user_email: userProfile.email,
+      user_name: userProfile.name,
+      room_number: room.room_number,
+      room_type_name: room.room_types?.name || 'Unknown',
       created_at: new Date().toISOString()
     };
 
-    await kv.set(`booking:${bookingId}`, booking);
-
-    return c.json(booking);
+    return c.json(fullBooking);
   } catch (error) {
     console.log(`Error creating booking: ${error}`);
     return c.json({ error: 'Failed to create booking', details: String(error) }, 500);
@@ -314,13 +387,30 @@ app.get('/make-server-3e6b123f/my-bookings', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const allBookings = await kv.getByPrefix('booking:');
-    const userBookings = allBookings.filter(booking => booking.user_id === user.id);
-    
-    // Sort by created_at descending
-    userBookings.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    const { data: userBookings, error } = await supabase
+      .from('bookings')
+      .select(`
+        *,
+        rooms (
+          room_number,
+          room_types (name)
+        )
+      `)
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
 
-    return c.json(userBookings);
+    if (error) throw error;
+
+    // Transform the data to match expected format
+    const transformedBookings = userBookings.map(booking => ({
+      ...booking,
+      user_email: user.email,
+      user_name: user.user_metadata?.name || user.email,
+      room_number: booking.rooms?.room_number,
+      room_type_name: booking.rooms?.room_types?.name || 'Unknown'
+    }));
+
+    return c.json(transformedBookings);
   } catch (error) {
     console.log(`Error fetching user bookings: ${error}`);
     return c.json({ error: 'Failed to fetch bookings', details: String(error) }, 500);

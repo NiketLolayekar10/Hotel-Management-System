@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
-import { projectId } from '../utils/supabase/info';
+import { supabase } from '../utils/supabase/client';
 import type { Booking } from '../utils/supabase/client';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
-import { CalendarIcon, Users, MapPin, DollarSign } from 'lucide-react';
+import { CalendarIcon, Users, MapPin, DollarSign, X } from 'lucide-react';
 import { Alert, AlertDescription } from './ui/alert';
 
 interface MyBookingsProps {
@@ -23,21 +23,33 @@ export function MyBookings({ accessToken, refreshTrigger }: MyBookingsProps) {
     setError('');
 
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-3e6b123f/my-bookings`,
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        }
-      );
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
 
-      if (!response.ok) {
-        throw new Error('Failed to fetch bookings');
-      }
+      const { data: userBookings, error } = await supabase
+        .from('bookings')
+        .select(`
+          *,
+          rooms (
+            room_number,
+            room_types (name)
+          )
+        `)
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
 
-      const data = await response.json();
-      setBookings(data);
+      if (error) throw error;
+
+      // Transform the data to match expected format
+      const transformedBookings = userBookings.map(booking => ({
+        ...booking,
+        user_email: user.email,
+        user_name: user.user_metadata?.name || user.email,
+        room_number: booking.rooms?.room_number,
+        room_type_name: booking.rooms?.room_types?.name || 'Unknown'
+      }));
+
+      setBookings(transformedBookings);
     } catch (err) {
       setError('Failed to load your bookings');
       console.error('Fetch bookings error:', err);
@@ -55,23 +67,12 @@ export function MyBookings({ accessToken, refreshTrigger }: MyBookingsProps) {
     setError('');
 
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-3e6b123f/bookings/${bookingId}`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify({
-            status: 'cancelled',
-          }),
-        }
-      );
+      const { error } = await supabase
+        .from('bookings')
+        .update({ status: 'cancelled' })
+        .eq('id', bookingId);
 
-      if (!response.ok) {
-        throw new Error('Failed to cancel booking');
-      }
+      if (error) throw error;
 
       // Refresh bookings
       await fetchBookings();
